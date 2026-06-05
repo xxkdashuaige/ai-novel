@@ -1,0 +1,29 @@
+# Dependencies and package manager stores
+node_modules/
+.pnpm-store/
+.npm-cache/
+.m2/
+
+# Build outputs
+dist/
+target/
+*.tsbuildinfo
+
+# Runtime files
+logs/
+.tmp/
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Office temporary files
+~$*.docx

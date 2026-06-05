@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+app:
+  ai:
+    enabled: false
+
+spring:
+  application:
+    name: ai-novel-backend
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:demo-key}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4.1-mini}
