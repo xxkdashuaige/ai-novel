@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { convertNovel, fetchSchema, validateYaml, type ConversionResponse, type ValidationResult } from './api'
+import { convertNovel, fetchSchema, validateYaml, type ConversionResponse, type ScriptBeat, type ScriptDocument, type ValidationResult } from './api'
 
 const sampleText = `第一章 雨夜
 林舟推开木门，雨水扑面而来。
@@ -17,7 +17,7 @@ const sampleText = `第一章 雨夜
 
 const novelText = ref(sampleText)
 const yaml = ref('')
-const preview = ref<unknown>(null)
+const preview = ref<ScriptDocument | null>(null)
 const schema = ref<unknown>(null)
 const validation = ref<ValidationResult | null>(null)
 const loading = ref(false)
@@ -27,6 +27,21 @@ const schemaDialogVisible = ref(false)
 const chapterCount = computed(() => {
   const matches = novelText.value.match(/^第[一二三四五六七八九十百千万0-9]+章/gm)
   return matches?.length ?? 0
+})
+
+const sceneCount = computed(() => preview.value?.chapters.reduce((total, chapter) => total + chapter.scenes.length, 0) ?? 0)
+const characterNames = computed(() => {
+  const names = new Set<string>()
+  preview.value?.chapters.forEach((chapter) => {
+    chapter.scenes.forEach((scene) => {
+      scene.characters?.forEach((character) => {
+        if (character.trim()) {
+          names.add(character.trim())
+        }
+      })
+    })
+  })
+  return [...names]
 })
 
 async function handleConvert() {
@@ -75,13 +90,59 @@ async function handleLoadSchema() {
 }
 
 function handleDownload() {
-  const blob = new Blob([yaml.value], { type: 'text/yaml;charset=utf-8' })
+  downloadFile('script.yaml', yaml.value, 'text/yaml;charset=utf-8')
+}
+
+function handleExportJson() {
+  if (!preview.value) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  downloadFile('script.json', JSON.stringify(preview.value, null, 2), 'application/json;charset=utf-8')
+}
+
+function handleExportText() {
+  if (!preview.value) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  downloadFile('script.txt', toReadableText(preview.value), 'text/plain;charset=utf-8')
+}
+
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = 'script.yaml'
+  link.download = filename
   link.click()
   URL.revokeObjectURL(url)
+}
+
+function toReadableText(script: ScriptDocument) {
+  return script.chapters
+    .map((chapter) => {
+      const scenes = chapter.scenes
+        .map((scene) => {
+          const beats = scene.beats.map((beat) => formatBeat(beat)).join('\n')
+          return `【${scene.title}】${scene.location} / ${scene.timeOfDay}\n人物：${scene.characters.join('、') || '未标注'}\n${beats}`
+        })
+        .join('\n\n')
+      return `${chapter.title}\n${chapter.summary}\n\n${scenes}`
+    })
+    .join('\n\n')
+}
+
+function formatBeat(beat: ScriptBeat) {
+  if (beat.type === 'dialogue') {
+    return `${beat.speaker || '角色'}：${beat.content}`
+  }
+  const labels: Record<string, string> = {
+    action: '动作',
+    narration: '旁白',
+    transition: '转场'
+  }
+  return `[${labels[beat.type] ?? beat.type}] ${beat.content}`
 }
 
 function readError(error: unknown) {
@@ -112,7 +173,16 @@ function readError(error: unknown) {
         </el-button>
         <el-button size="large" :disabled="loading" @click="handleValidate">校验 YAML</el-button>
         <el-button size="large" :loading="schemaLoading" :disabled="loading" @click="handleLoadSchema">查看 Schema</el-button>
-        <el-button size="large" :disabled="!yaml" @click="handleDownload">下载 YAML</el-button>
+        <el-dropdown :disabled="!yaml">
+          <el-button size="large" :disabled="!yaml">导出结果</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="handleDownload">导出 YAML</el-dropdown-item>
+              <el-dropdown-item @click="handleExportJson">导出 JSON</el-dropdown-item>
+              <el-dropdown-item @click="handleExportText">导出 TXT</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
       <div v-if="loading" class="ai-status" role="status" aria-live="polite">
         <span class="ai-status__dot"></span>
@@ -159,8 +229,44 @@ function readError(error: unknown) {
 
     <section class="inspector-grid">
       <el-card class="panel" shadow="never">
-        <template #header>JSON 预览</template>
-        <pre>{{ JSON.stringify(preview, null, 2) }}</pre>
+        <template #header>
+          <div class="panel-header">
+            <span>剧本可视化预览</span>
+            <el-tag v-if="preview" type="success">{{ sceneCount }} 个场景</el-tag>
+          </div>
+        </template>
+        <div v-if="preview" class="script-preview">
+          <div class="preview-meta">
+            <strong>{{ preview.title }}</strong>
+            <span>{{ preview.metadata?.generationMode || 'UNKNOWN' }}</span>
+          </div>
+          <div class="character-strip">
+            <el-tag v-for="character in characterNames" :key="character" type="info">{{ character }}</el-tag>
+          </div>
+          <article v-for="chapter in preview.chapters" :key="chapter.id" class="chapter-preview">
+            <header>
+              <h3>{{ chapter.title }}</h3>
+              <p>{{ chapter.summary }}</p>
+            </header>
+            <section v-for="scene in chapter.scenes" :key="scene.id" class="scene-preview">
+              <div class="scene-title">
+                <strong>{{ scene.title }}</strong>
+                <span>{{ scene.location }} · {{ scene.timeOfDay }}</span>
+              </div>
+              <div class="scene-characters">
+                <el-tag v-for="character in scene.characters" :key="character" size="small">{{ character }}</el-tag>
+              </div>
+              <div class="beat-list">
+                <div v-for="(beat, index) in scene.beats" :key="`${scene.id}-${index}`" :class="['beat-item', `beat-item--${beat.type}`]">
+                  <span class="beat-type">{{ beat.type }}</span>
+                  <strong v-if="beat.speaker">{{ beat.speaker }}</strong>
+                  <p>{{ beat.content }}</p>
+                </div>
+              </div>
+            </section>
+          </article>
+        </div>
+        <div v-else class="empty-preview">转换完成后，这里会按章节和场景展示剧本预览。</div>
       </el-card>
 
       <el-card class="panel" shadow="never">
@@ -177,6 +283,17 @@ function readError(error: unknown) {
           </ul>
         </el-alert>
         <el-alert v-else-if="validation?.valid" title="当前 YAML 符合剧本 Schema" type="success" :closable="false" show-icon />
+        <el-alert
+          v-if="validation?.warnings?.length"
+          title="一致性提醒"
+          type="warning"
+          :closable="false"
+          show-icon
+        >
+          <ul>
+            <li v-for="warning in validation.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </el-alert>
         <pre>{{ JSON.stringify(schema, null, 2) }}</pre>
       </el-card>
     </section>

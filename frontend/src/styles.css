@@ -180,6 +180,135 @@ h1 {
   max-height: 360px;
 }
 
+.script-preview {
+  display: grid;
+  gap: 16px;
+}
+
+.preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(23, 32, 24, 0.12);
+}
+
+.preview-meta strong {
+  font-size: 1.05rem;
+}
+
+.preview-meta span {
+  color: #4f6c5c;
+  font-size: 0.95rem;
+}
+
+.character-strip,
+.scene-characters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chapter-preview {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(23, 32, 24, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.chapter-preview h3,
+.chapter-preview p {
+  margin: 0;
+}
+
+.chapter-preview header {
+  display: grid;
+  gap: 6px;
+}
+
+.chapter-preview header p {
+  color: #557061;
+  line-height: 1.7;
+}
+
+.scene-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(238, 241, 232, 0.85);
+}
+
+.scene-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scene-title span {
+  color: #577160;
+  font-size: 0.92rem;
+}
+
+.beat-list {
+  display: grid;
+  gap: 10px;
+}
+
+.beat-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-left: 4px solid #7f9588;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.beat-item p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.beat-type {
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  background: rgba(23, 32, 24, 0.08);
+}
+
+.beat-item--dialogue {
+  border-left-color: #5a7ce2;
+}
+
+.beat-item--action {
+  border-left-color: #e29b52;
+}
+
+.beat-item--narration {
+  border-left-color: #6d8e6a;
+}
+
+.beat-item--transition {
+  border-left-color: #b06cc7;
+}
+
+.empty-preview {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  border: 1px dashed rgba(23, 32, 24, 0.16);
+  border-radius: 16px;
+  color: #5d7568;
+  text-align: center;
+  line-height: 1.7;
+}
+
 @keyframes status-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(121, 226, 125, 0.72);

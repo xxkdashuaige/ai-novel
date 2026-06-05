@@ -3,12 +3,44 @@ import axios from 'axios'
 export interface ValidationResult {
   valid: boolean
   errors: string[]
+  warnings: string[]
 }
 
 export interface ConversionResponse {
-  script: unknown
+  script: ScriptDocument
   yaml: string
   validation: ValidationResult
+}
+
+export interface ScriptDocument {
+  title: string
+  chapters: ScriptChapter[]
+  metadata?: {
+    sourceChapterCount: number
+    generationMode: string
+  }
+}
+
+export interface ScriptChapter {
+  id: string
+  title: string
+  summary: string
+  scenes: ScriptScene[]
+}
+
+export interface ScriptScene {
+  id: string
+  title: string
+  location: string
+  timeOfDay: string
+  characters: string[]
+  beats: ScriptBeat[]
+}
+
+export interface ScriptBeat {
+  type: 'dialogue' | 'action' | 'narration' | 'transition' | string
+  speaker?: string
+  content: string
 }
 
 export async function convertNovel(novelText: string): Promise<ConversionResponse> {
