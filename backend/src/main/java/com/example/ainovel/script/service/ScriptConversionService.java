@@ -22,6 +22,10 @@ public class ScriptConversionService {
 
     public ConversionResponse convert(String novelText) {
         ScriptDocument document = generator.generate(novelText);
+        return render(document);
+    }
+
+    public ConversionResponse render(ScriptDocument document) {
         String yaml = yamlScriptService.toYaml(document);
         ValidationResult validation = validationService.validate(document);
         return new ConversionResponse(document, yaml, validation);

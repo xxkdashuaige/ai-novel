@@ -12,6 +12,11 @@ export interface ConversionResponse {
   validation: ValidationResult
 }
 
+export interface EditResponse {
+  result: string
+  generationMode: string
+}
+
 export interface ScriptDocument {
   title: string
   chapters: ScriptChapter[]
@@ -50,6 +55,22 @@ export async function convertNovel(novelText: string): Promise<ConversionRespons
 
 export async function validateYaml(yaml: string): Promise<ValidationResult> {
   const response = await axios.post<ValidationResult>('/api/scripts/validate', { yaml })
+  return response.data
+}
+
+export async function renderScript(script: ScriptDocument): Promise<ConversionResponse> {
+  const response = await axios.post<ConversionResponse>('/api/scripts/render', script)
+  return response.data
+}
+
+export async function editBeat(input: {
+  type: 'polish-dialogue' | 'expand-action'
+  content: string
+  speaker?: string
+  sceneTitle?: string
+  characters?: string[]
+}): Promise<EditResponse> {
+  const response = await axios.post<EditResponse>('/api/scripts/edit', input)
   return response.data
 }
 

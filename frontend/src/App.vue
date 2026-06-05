@@ -1,7 +1,41 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { convertNovel, fetchSchema, validateYaml, type ConversionResponse, type ScriptBeat, type ScriptDocument, type ValidationResult } from './api'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  convertNovel,
+  editBeat,
+  fetchSchema,
+  renderScript,
+  validateYaml,
+  type ConversionResponse,
+  type ScriptBeat,
+  type ScriptDocument,
+  type ValidationResult
+} from './api'
+
+interface HistoryItem {
+  id: string
+  title: string
+  createdAt: string
+  generationMode: string
+  chapterCount: number
+  sceneCount: number
+  script: ScriptDocument
+  yaml: string
+  validation: ValidationResult
+}
+
+interface EditTarget {
+  chapterIndex: number
+  sceneIndex: number
+  beatIndex: number
+  actionType: 'polish-dialogue' | 'expand-action'
+  beat: ScriptBeat
+  sceneTitle: string
+  characters: string[]
+}
+
+const HISTORY_KEY = 'ai-novel-script-history'
 
 const sampleText = `第一章 雨夜
 林舟推开木门，雨水扑面而来。
@@ -20,16 +54,22 @@ const yaml = ref('')
 const preview = ref<ScriptDocument | null>(null)
 const schema = ref<unknown>(null)
 const validation = ref<ValidationResult | null>(null)
+const history = ref<HistoryItem[]>([])
 const loading = ref(false)
 const schemaLoading = ref(false)
 const schemaDialogVisible = ref(false)
+const editDialogVisible = ref(false)
+const editLoading = ref(false)
+const editSuggestion = ref('')
+const editMode = ref('')
+const editTarget = ref<EditTarget | null>(null)
 
 const chapterCount = computed(() => {
   const matches = novelText.value.match(/^第[一二三四五六七八九十百千万0-9]+章/gm)
   return matches?.length ?? 0
 })
 
-const sceneCount = computed(() => preview.value?.chapters.reduce((total, chapter) => total + chapter.scenes.length, 0) ?? 0)
+const sceneCount = computed(() => countScenes(preview.value))
 const characterNames = computed(() => {
   const names = new Set<string>()
   preview.value?.chapters.forEach((chapter) => {
@@ -44,6 +84,10 @@ const characterNames = computed(() => {
   return [...names]
 })
 
+onMounted(() => {
+  history.value = readHistory()
+})
+
 async function handleConvert() {
   loading.value = true
   yaml.value = ''
@@ -51,10 +95,9 @@ async function handleConvert() {
   validation.value = null
   try {
     const result: ConversionResponse = await convertNovel(novelText.value)
-    yaml.value = result.yaml
-    preview.value = result.script
-    validation.value = result.validation
-    ElMessage.success('转换完成')
+    setConversionResult(result)
+    saveHistory(result)
+    ElMessage.success('转换完成，已保存到历史记录')
   } catch (error) {
     ElMessage.error(readError(error))
   } finally {
@@ -89,6 +132,50 @@ async function handleLoadSchema() {
   }
 }
 
+async function requestBeatEdit(target: EditTarget) {
+  editTarget.value = target
+  editSuggestion.value = ''
+  editMode.value = target.actionType === 'polish-dialogue' ? '台词优化' : '动作补充'
+  editDialogVisible.value = true
+  editLoading.value = true
+  try {
+    const response = await editBeat({
+      type: target.actionType,
+      content: target.beat.content,
+      speaker: target.beat.speaker,
+      sceneTitle: target.sceneTitle,
+      characters: target.characters
+    })
+    editSuggestion.value = response.result
+    ElMessage.success(`${editMode.value}建议已生成`)
+  } catch (error) {
+    ElMessage.error(readError(error))
+    editDialogVisible.value = false
+  } finally {
+    editLoading.value = false
+  }
+}
+
+async function applyEditSuggestion() {
+  if (!preview.value || !editTarget.value || !editSuggestion.value.trim()) {
+    return
+  }
+
+  const nextScript = cloneScript(preview.value)
+  const target = editTarget.value
+  nextScript.chapters[target.chapterIndex].scenes[target.sceneIndex].beats[target.beatIndex].content = editSuggestion.value.trim()
+
+  try {
+    const result = await renderScript(nextScript)
+    setConversionResult(result)
+    saveHistory(result)
+    editDialogVisible.value = false
+    ElMessage.success('AI 编辑已应用，并重新生成 YAML')
+  } catch (error) {
+    ElMessage.error(readError(error))
+  }
+}
+
 function handleDownload() {
   downloadFile('script.yaml', yaml.value, 'text/yaml;charset=utf-8')
 }
@@ -107,6 +194,75 @@ function handleExportText() {
     return
   }
   downloadFile('script.txt', toReadableText(preview.value), 'text/plain;charset=utf-8')
+}
+
+function loadHistoryItem(item: HistoryItem) {
+  preview.value = cloneScript(item.script)
+  yaml.value = item.yaml
+  validation.value = item.validation
+  ElMessage.success('已加载历史记录')
+}
+
+function removeHistoryItem(id: string) {
+  history.value = history.value.filter((item) => item.id !== id)
+  writeHistory(history.value)
+  ElMessage.success('历史记录已删除')
+}
+
+async function clearHistory() {
+  if (!history.value.length) {
+    return
+  }
+  await ElMessageBox.confirm('确定清空全部转换历史吗？', '清空历史', {
+    confirmButtonText: '清空',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+  history.value = []
+  writeHistory(history.value)
+  ElMessage.success('历史记录已清空')
+}
+
+function setConversionResult(result: ConversionResponse) {
+  yaml.value = result.yaml
+  preview.value = result.script
+  validation.value = result.validation
+}
+
+function saveHistory(result: ConversionResponse) {
+  const item: HistoryItem = {
+    id: `${Date.now()}`,
+    title: result.script.title || '未命名剧本',
+    createdAt: new Date().toLocaleString(),
+    generationMode: result.script.metadata?.generationMode || 'UNKNOWN',
+    chapterCount: result.script.chapters.length,
+    sceneCount: countScenes(result.script),
+    script: result.script,
+    yaml: result.yaml,
+    validation: result.validation
+  }
+  history.value = [item, ...history.value.filter((historyItem) => historyItem.yaml !== item.yaml)].slice(0, 12)
+  writeHistory(history.value)
+}
+
+function readHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') as HistoryItem[]
+  } catch {
+    return []
+  }
+}
+
+function writeHistory(items: HistoryItem[]) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(items))
+}
+
+function countScenes(script: ScriptDocument | null) {
+  return script?.chapters.reduce((total, chapter) => total + chapter.scenes.length, 0) ?? 0
+}
+
+function cloneScript(script: ScriptDocument) {
+  return JSON.parse(JSON.stringify(script)) as ScriptDocument
 }
 
 function downloadFile(filename: string, content: string, type: string) {
@@ -227,6 +383,29 @@ function readError(error: unknown) {
       </el-card>
     </section>
 
+    <section class="history-panel">
+      <div class="history-header">
+        <div>
+          <h2>转换历史</h2>
+          <p>最近 12 次转换会保存在当前浏览器，便于回看和继续编辑。</p>
+        </div>
+        <el-button size="small" :disabled="!history.length" @click="clearHistory">清空历史</el-button>
+      </div>
+      <div v-if="history.length" class="history-list">
+        <article v-for="item in history" :key="item.id" class="history-item">
+          <div>
+            <strong>{{ item.title }}</strong>
+            <p>{{ item.createdAt }} · {{ item.generationMode }} · {{ item.chapterCount }} 章 / {{ item.sceneCount }} 场</p>
+          </div>
+          <div class="history-actions">
+            <el-button size="small" type="primary" plain @click="loadHistoryItem(item)">加载</el-button>
+            <el-button size="small" type="danger" plain @click="removeHistoryItem(item.id)">删除</el-button>
+          </div>
+        </article>
+      </div>
+      <div v-else class="empty-history">完成一次转换后，这里会自动保存历史记录。</div>
+    </section>
+
     <section class="inspector-grid">
       <el-card class="panel" shadow="never">
         <template #header>
@@ -243,12 +422,12 @@ function readError(error: unknown) {
           <div class="character-strip">
             <el-tag v-for="character in characterNames" :key="character" type="info">{{ character }}</el-tag>
           </div>
-          <article v-for="chapter in preview.chapters" :key="chapter.id" class="chapter-preview">
+          <article v-for="(chapter, chapterIndex) in preview.chapters" :key="chapter.id" class="chapter-preview">
             <header>
               <h3>{{ chapter.title }}</h3>
               <p>{{ chapter.summary }}</p>
             </header>
-            <section v-for="scene in chapter.scenes" :key="scene.id" class="scene-preview">
+            <section v-for="(scene, sceneIndex) in chapter.scenes" :key="scene.id" class="scene-preview">
               <div class="scene-title">
                 <strong>{{ scene.title }}</strong>
                 <span>{{ scene.location }} · {{ scene.timeOfDay }}</span>
@@ -257,8 +436,28 @@ function readError(error: unknown) {
                 <el-tag v-for="character in scene.characters" :key="character" size="small">{{ character }}</el-tag>
               </div>
               <div class="beat-list">
-                <div v-for="(beat, index) in scene.beats" :key="`${scene.id}-${index}`" :class="['beat-item', `beat-item--${beat.type}`]">
-                  <span class="beat-type">{{ beat.type }}</span>
+                <div v-for="(beat, beatIndex) in scene.beats" :key="`${scene.id}-${beatIndex}`" :class="['beat-item', `beat-item--${beat.type}`]">
+                  <div class="beat-heading">
+                    <span class="beat-type">{{ beat.type }}</span>
+                    <div class="beat-actions">
+                      <el-button
+                        v-if="beat.type === 'dialogue'"
+                        size="small"
+                        text
+                        @click="requestBeatEdit({ chapterIndex, sceneIndex, beatIndex, actionType: 'polish-dialogue', beat, sceneTitle: scene.title, characters: scene.characters })"
+                      >
+                        优化台词
+                      </el-button>
+                      <el-button
+                        v-if="beat.type === 'action' || beat.type === 'narration'"
+                        size="small"
+                        text
+                        @click="requestBeatEdit({ chapterIndex, sceneIndex, beatIndex, actionType: 'expand-action', beat, sceneTitle: scene.title, characters: scene.characters })"
+                      >
+                        补充动作
+                      </el-button>
+                    </div>
+                  </div>
                   <strong v-if="beat.speaker">{{ beat.speaker }}</strong>
                   <p>{{ beat.content }}</p>
                 </div>
@@ -310,6 +509,24 @@ function readError(error: unknown) {
       <pre>{{ JSON.stringify(schema, null, 2) }}</pre>
       <template #footer>
         <el-button type="primary" @click="schemaDialogVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editDialogVisible" :title="`AI 辅助编辑：${editMode}`" width="720px">
+      <div class="edit-dialog">
+        <div class="edit-block">
+          <span>原文</span>
+          <p>{{ editTarget?.beat.content }}</p>
+        </div>
+        <div class="edit-block edit-block--suggestion">
+          <span>AI 建议</span>
+          <div v-if="editLoading" class="edit-loading">DeepSeek 正在生成编辑建议...</div>
+          <p v-else>{{ editSuggestion }}</p>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="editLoading || !editSuggestion" @click="applyEditSuggestion">应用到剧本</el-button>
       </template>
     </el-dialog>
   </main>

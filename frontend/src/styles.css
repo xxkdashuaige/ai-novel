@@ -102,6 +102,76 @@ h1 {
   margin-bottom: 20px;
 }
 
+.history-panel {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  margin-bottom: 20px;
+  border: 1px solid rgba(27, 51, 40, 0.1);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.history-header,
+.history-item,
+.history-actions,
+.beat-heading,
+.beat-actions {
+  display: flex;
+  align-items: center;
+}
+
+.history-header,
+.history-item,
+.beat-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-header h2,
+.history-header p,
+.history-item p {
+  margin: 0;
+}
+
+.history-header h2 {
+  font-size: 1.08rem;
+}
+
+.history-header p,
+.history-item p,
+.empty-history {
+  color: #607869;
+  line-height: 1.6;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-item {
+  padding: 12px 14px;
+  border: 1px solid rgba(27, 51, 40, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.history-actions,
+.beat-actions {
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.empty-history {
+  display: grid;
+  place-items: center;
+  min-height: 88px;
+  border: 1px dashed rgba(23, 32, 24, 0.16);
+  border-radius: 14px;
+  text-align: center;
+}
+
 .panel {
   border: 1px solid rgba(27, 51, 40, 0.1);
   border-radius: 22px;
@@ -273,6 +343,10 @@ h1 {
   line-height: 1.7;
 }
 
+.beat-heading {
+  align-items: flex-start;
+}
+
 .beat-type {
   width: fit-content;
   padding: 2px 8px;
@@ -309,6 +383,39 @@ h1 {
   line-height: 1.7;
 }
 
+.edit-dialog {
+  display: grid;
+  gap: 14px;
+}
+
+.edit-block {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(23, 32, 24, 0.1);
+  border-radius: 14px;
+  background: #f8faf6;
+}
+
+.edit-block span {
+  color: #526f5f;
+  font-weight: 700;
+}
+
+.edit-block p {
+  margin: 0;
+  line-height: 1.8;
+}
+
+.edit-block--suggestion {
+  background: #ffffff;
+}
+
+.edit-loading {
+  color: #526f5f;
+  line-height: 1.8;
+}
+
 @keyframes status-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(121, 226, 125, 0.72);
@@ -332,5 +439,13 @@ h1 {
 
   .hero-card {
     padding: 28px;
+  }
+
+  .history-header,
+  .history-item,
+  .scene-title,
+  .beat-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

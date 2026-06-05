@@ -1,9 +1,12 @@
 package com.example.ainovel.script.controller;
 
 import com.example.ainovel.script.service.ConversionResponse;
+import com.example.ainovel.script.service.AiEditingService;
+import com.example.ainovel.script.service.EditResponse;
 import com.example.ainovel.script.service.ScriptConversionService;
 import com.example.ainovel.script.service.ScriptValidationService;
 import com.example.ainovel.script.service.ValidationResult;
+import com.example.ainovel.script.model.ScriptDocument;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,15 +28,31 @@ public class ScriptController {
 
     private final ScriptConversionService conversionService;
     private final ScriptValidationService validationService;
+    private final AiEditingService editingService;
 
-    public ScriptController(ScriptConversionService conversionService, ScriptValidationService validationService) {
+    public ScriptController(
+            ScriptConversionService conversionService,
+            ScriptValidationService validationService,
+            AiEditingService editingService
+    ) {
         this.conversionService = conversionService;
         this.validationService = validationService;
+        this.editingService = editingService;
     }
 
     @PostMapping("/scripts/convert")
     public ConversionResponse convert(@Valid @RequestBody ConvertRequest request) {
         return conversionService.convert(request.novelText());
+    }
+
+    @PostMapping("/scripts/render")
+    public ConversionResponse render(@Valid @RequestBody ScriptDocument document) {
+        return conversionService.render(document);
+    }
+
+    @PostMapping("/scripts/edit")
+    public EditResponse edit(@Valid @RequestBody EditRequest request) {
+        return editingService.edit(request);
     }
 
     @PostMapping("/scripts/validate")
