@@ -84,6 +84,26 @@ h1 {
   line-height: 1.5;
 }
 
+.status-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 241, 220, 0.28);
+  border-radius: 14px;
+  color: #fff8df;
+  background: rgba(15, 35, 27, 0.34);
+  line-height: 1.5;
+}
+
+.status-strip--result {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .ai-status__dot {
   width: 10px;
   height: 10px;
@@ -132,6 +152,13 @@ h1 {
 .history-header p,
 .history-item p {
   margin: 0;
+}
+
+.history-item small {
+  display: block;
+  margin-top: 4px;
+  color: #7a8d81;
+  line-height: 1.5;
 }
 
 .history-header h2 {
@@ -280,6 +307,94 @@ h1 {
   gap: 8px;
 }
 
+.relation-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(23, 32, 24, 0.08);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(226, 155, 82, 0.16), transparent 32%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(238, 241, 232, 0.82));
+}
+
+.relation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relation-header h3,
+.relation-header p {
+  margin: 0;
+}
+
+.relation-header p {
+  margin-top: 6px;
+  color: #557061;
+  line-height: 1.6;
+}
+
+.relation-graph {
+  display: grid;
+  gap: 10px;
+}
+
+.relation-graph svg {
+  width: 100%;
+  min-height: 260px;
+  border-radius: 14px;
+  background:
+    linear-gradient(rgba(23, 32, 24, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 32, 24, 0.04) 1px, transparent 1px),
+    rgba(255, 255, 255, 0.7);
+  background-size: 26px 26px;
+}
+
+.relation-link {
+  stroke: rgba(70, 106, 82, 0.42);
+  stroke-linecap: round;
+}
+
+.relation-node circle {
+  fill: #355d45;
+  stroke: #f7edcf;
+  stroke-width: 3px;
+  filter: drop-shadow(0 8px 14px rgba(27, 51, 40, 0.24));
+}
+
+.relation-node text {
+  fill: #233429;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.relation-node .relation-node-count {
+  fill: #fff8df;
+  font-size: 12px;
+}
+
+.relation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #5f796a;
+  font-size: 0.9rem;
+}
+
+.relation-legend span,
+.relation-empty {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.relation-empty {
+  width: fit-content;
+  color: #5f796a;
+}
+
 .chapter-preview {
   display: grid;
   gap: 12px;
@@ -416,6 +531,12 @@ h1 {
   line-height: 1.8;
 }
 
+.warning-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 @keyframes status-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(121, 226, 125, 0.72);
@@ -443,6 +564,7 @@ h1 {
 
   .history-header,
   .history-item,
+  .relation-header,
   .scene-title,
   .beat-heading {
     align-items: flex-start;

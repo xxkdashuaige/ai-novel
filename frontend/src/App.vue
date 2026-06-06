@@ -2,28 +2,23 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  clearHistoryItems,
   convertNovel,
+  deleteHistoryItem,
   editBeat,
+  fetchAiStatus,
+  fetchHistory,
   fetchSchema,
+  repairScript,
   renderScript,
   validateYaml,
+  type AiStatusResponse,
   type ConversionResponse,
   type ScriptBeat,
   type ScriptDocument,
+  type ScriptHistoryItem,
   type ValidationResult
 } from './api'
-
-interface HistoryItem {
-  id: string
-  title: string
-  createdAt: string
-  generationMode: string
-  chapterCount: number
-  sceneCount: number
-  script: ScriptDocument
-  yaml: string
-  validation: ValidationResult
-}
 
 interface EditTarget {
   chapterIndex: number
@@ -35,7 +30,30 @@ interface EditTarget {
   characters: string[]
 }
 
-const HISTORY_KEY = 'ai-novel-script-history'
+interface CharacterRelationNode {
+  name: string
+  sceneCount: number
+  dialogueCount: number
+  x: number
+  y: number
+  radius: number
+}
+
+interface CharacterRelationLink {
+  source: string
+  target: string
+  weight: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+interface CharacterRelationGraph {
+  nodes: CharacterRelationNode[]
+  links: CharacterRelationLink[]
+  maxWeight: number
+}
 
 const sampleText = `第一章 雨夜
 林舟推开木门，雨水扑面而来。
@@ -54,9 +72,12 @@ const yaml = ref('')
 const preview = ref<ScriptDocument | null>(null)
 const schema = ref<unknown>(null)
 const validation = ref<ValidationResult | null>(null)
-const history = ref<HistoryItem[]>([])
+const history = ref<ScriptHistoryItem[]>([])
+const aiStatus = ref<AiStatusResponse | null>(null)
 const loading = ref(false)
 const schemaLoading = ref(false)
+const historyLoading = ref(false)
+const repairLoading = ref(false)
 const schemaDialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const editLoading = ref(false)
@@ -83,9 +104,10 @@ const characterNames = computed(() => {
   })
   return [...names]
 })
+const relationshipGraph = computed(() => buildCharacterRelationGraph(preview.value))
 
-onMounted(() => {
-  history.value = readHistory()
+onMounted(async () => {
+  await Promise.all([loadAiStatus(), loadHistory()])
 })
 
 async function handleConvert() {
@@ -96,8 +118,8 @@ async function handleConvert() {
   try {
     const result: ConversionResponse = await convertNovel(novelText.value)
     setConversionResult(result)
-    saveHistory(result)
-    ElMessage.success('转换完成，已保存到历史记录')
+    await loadHistory()
+    ElMessage.success(result.script.metadata?.generationMessage || '转换完成，已保存到后端历史记录')
   } catch (error) {
     ElMessage.error(readError(error))
   } finally {
@@ -147,7 +169,7 @@ async function requestBeatEdit(target: EditTarget) {
       characters: target.characters
     })
     editSuggestion.value = response.result
-    ElMessage.success(`${editMode.value}建议已生成`)
+    ElMessage.success(`${editMode.value}建议已生成（${formatGenerationMode(response.generationMode)}）`)
   } catch (error) {
     ElMessage.error(readError(error))
     editDialogVisible.value = false
@@ -168,7 +190,7 @@ async function applyEditSuggestion() {
   try {
     const result = await renderScript(nextScript)
     setConversionResult(result)
-    saveHistory(result)
+    await loadHistory()
     editDialogVisible.value = false
     ElMessage.success('AI 编辑已应用，并重新生成 YAML')
   } catch (error) {
@@ -196,17 +218,39 @@ function handleExportText() {
   downloadFile('script.txt', toReadableText(preview.value), 'text/plain;charset=utf-8')
 }
 
-function loadHistoryItem(item: HistoryItem) {
+async function handleRepairConsistency() {
+  if (!preview.value) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  repairLoading.value = true
+  try {
+    const result = await repairScript(preview.value)
+    setConversionResult(result)
+    await loadHistory()
+    ElMessage.success('已自动补全场景人物，并重新生成 YAML')
+  } catch (error) {
+    ElMessage.error(readError(error))
+  } finally {
+    repairLoading.value = false
+  }
+}
+
+function loadHistoryItem(item: ScriptHistoryItem) {
   preview.value = cloneScript(item.script)
   yaml.value = item.yaml
   validation.value = item.validation
   ElMessage.success('已加载历史记录')
 }
 
-function removeHistoryItem(id: string) {
-  history.value = history.value.filter((item) => item.id !== id)
-  writeHistory(history.value)
-  ElMessage.success('历史记录已删除')
+async function removeHistoryItem(id: string) {
+  try {
+    await deleteHistoryItem(id)
+    await loadHistory()
+    ElMessage.success('历史记录已删除')
+  } catch (error) {
+    ElMessage.error(readError(error))
+  }
 }
 
 async function clearHistory() {
@@ -218,9 +262,13 @@ async function clearHistory() {
     cancelButtonText: '取消',
     type: 'warning'
   })
-  history.value = []
-  writeHistory(history.value)
-  ElMessage.success('历史记录已清空')
+  try {
+    await clearHistoryItems()
+    await loadHistory()
+    ElMessage.success('历史记录已清空')
+  } catch (error) {
+    ElMessage.error(readError(error))
+  }
 }
 
 function setConversionResult(result: ConversionResponse) {
@@ -229,40 +277,125 @@ function setConversionResult(result: ConversionResponse) {
   validation.value = result.validation
 }
 
-function saveHistory(result: ConversionResponse) {
-  const item: HistoryItem = {
-    id: `${Date.now()}`,
-    title: result.script.title || '未命名剧本',
-    createdAt: new Date().toLocaleString(),
-    generationMode: result.script.metadata?.generationMode || 'UNKNOWN',
-    chapterCount: result.script.chapters.length,
-    sceneCount: countScenes(result.script),
-    script: result.script,
-    yaml: result.yaml,
-    validation: result.validation
-  }
-  history.value = [item, ...history.value.filter((historyItem) => historyItem.yaml !== item.yaml)].slice(0, 12)
-  writeHistory(history.value)
-}
-
-function readHistory() {
+async function loadAiStatus() {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') as HistoryItem[]
-  } catch {
-    return []
+    aiStatus.value = await fetchAiStatus()
+  } catch (error) {
+    ElMessage.warning(readError(error))
   }
 }
 
-function writeHistory(items: HistoryItem[]) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(items))
+async function loadHistory() {
+  historyLoading.value = true
+  try {
+    history.value = await fetchHistory()
+  } catch (error) {
+    ElMessage.warning(readError(error))
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 function countScenes(script: ScriptDocument | null) {
   return script?.chapters.reduce((total, chapter) => total + chapter.scenes.length, 0) ?? 0
 }
 
+function buildCharacterRelationGraph(script: ScriptDocument | null): CharacterRelationGraph {
+  if (!script) {
+    return { nodes: [], links: [], maxWeight: 0 }
+  }
+
+  const stats = new Map<string, { sceneCount: number, dialogueCount: number }>()
+  const pairWeights = new Map<string, number>()
+
+  script.chapters.forEach((chapter) => {
+    chapter.scenes.forEach((scene) => {
+      const sceneNames = new Set<string>()
+      scene.characters?.forEach((character) => addCharacterName(sceneNames, character))
+      scene.beats.forEach((beat) => {
+        if (beat.speaker) {
+          addCharacterName(sceneNames, beat.speaker)
+          const stat = stats.get(beat.speaker.trim()) ?? { sceneCount: 0, dialogueCount: 0 }
+          stat.dialogueCount += 1
+          stats.set(beat.speaker.trim(), stat)
+        }
+      })
+
+      const names = [...sceneNames].sort((left, right) => left.localeCompare(right, 'zh-CN'))
+      names.forEach((name) => {
+        const stat = stats.get(name) ?? { sceneCount: 0, dialogueCount: 0 }
+        stat.sceneCount += 1
+        stats.set(name, stat)
+      })
+      names.forEach((source, sourceIndex) => {
+        names.slice(sourceIndex + 1).forEach((target) => {
+          const key = relationKey(source, target)
+          pairWeights.set(key, (pairWeights.get(key) ?? 0) + 1)
+        })
+      })
+    })
+  })
+
+  const orderedNames = [...stats.entries()]
+    .sort((left, right) => right[1].sceneCount - left[1].sceneCount || left[0].localeCompare(right[0], 'zh-CN'))
+    .map(([name]) => name)
+  const centerX = 260
+  const centerY = 160
+  const radiusX = orderedNames.length <= 2 ? 110 : 185
+  const radiusY = orderedNames.length <= 2 ? 0 : 108
+
+  const nodes = orderedNames.map((name, index) => {
+    const angle = orderedNames.length === 1 ? 0 : (Math.PI * 2 * index) / orderedNames.length - Math.PI / 2
+    const stat = stats.get(name) ?? { sceneCount: 0, dialogueCount: 0 }
+    return {
+      name,
+      sceneCount: stat.sceneCount,
+      dialogueCount: stat.dialogueCount,
+      x: orderedNames.length === 1 ? centerX : centerX + Math.cos(angle) * radiusX,
+      y: orderedNames.length === 1 ? centerY : centerY + Math.sin(angle) * radiusY,
+      radius: Math.min(30, 16 + stat.sceneCount * 2)
+    }
+  })
+  const nodeMap = new Map(nodes.map((node) => [node.name, node]))
+  const links = [...pairWeights.entries()].map(([key, weight]) => {
+    const [source, target] = key.split('\u0000')
+    const sourceNode = nodeMap.get(source)
+    const targetNode = nodeMap.get(target)
+    return sourceNode && targetNode
+      ? { source, target, weight, x1: sourceNode.x, y1: sourceNode.y, x2: targetNode.x, y2: targetNode.y }
+      : null
+  }).filter((link): link is CharacterRelationLink => link !== null)
+
+  return {
+    nodes,
+    links,
+    maxWeight: Math.max(0, ...links.map((link) => link.weight))
+  }
+}
+
+function addCharacterName(names: Set<string>, character: string) {
+  const normalized = character.trim()
+  if (normalized) {
+    names.add(normalized)
+  }
+}
+
+function relationKey(source: string, target: string) {
+  return [source, target].sort((left, right) => left.localeCompare(right, 'zh-CN')).join('\u0000')
+}
+
 function cloneScript(script: ScriptDocument) {
   return JSON.parse(JSON.stringify(script)) as ScriptDocument
+}
+
+function formatGenerationMode(mode?: string) {
+  const labels: Record<string, string> = {
+    AI_DEEPSEEK: 'DeepSeek AI',
+    AI_OPENAI_COMPATIBLE: 'OpenAI-compatible AI',
+    RULE_BASED: '规则解析器',
+    RULE_BASED_FALLBACK: '规则兜底'
+  }
+  return labels[mode || ''] || mode || '未知来源'
 }
 
 function downloadFile(filename: string, content: string, type: string) {
@@ -340,9 +473,21 @@ function readError(error: unknown) {
           </template>
         </el-dropdown>
       </div>
+      <div v-if="aiStatus" class="status-strip">
+        <el-tag :type="aiStatus.enabled && aiStatus.apiKeyConfigured ? 'success' : 'warning'">
+          {{ aiStatus.provider }} · {{ aiStatus.model }}
+        </el-tag>
+        <span>{{ aiStatus.message }}</span>
+      </div>
+      <div v-if="preview?.metadata?.generationMessage" class="status-strip status-strip--result">
+        <el-tag :type="preview.metadata.generationMode === 'RULE_BASED_FALLBACK' ? 'warning' : 'success'">
+          {{ formatGenerationMode(preview.metadata.generationMode) }}
+        </el-tag>
+        <span>{{ preview.metadata.generationMessage }}</span>
+      </div>
       <div v-if="loading" class="ai-status" role="status" aria-live="polite">
         <span class="ai-status__dot"></span>
-        <span>DeepSeek 正在理解章节、人物和对白，生成结构化 YAML 剧本，请稍候...</span>
+        <span>{{ aiStatus?.provider || 'AI' }} 正在理解章节、人物和对白，生成结构化 YAML 剧本，请稍候...</span>
       </div>
     </section>
 
@@ -387,15 +532,16 @@ function readError(error: unknown) {
       <div class="history-header">
         <div>
           <h2>转换历史</h2>
-          <p>最近 12 次转换会保存在当前浏览器，便于回看和继续编辑。</p>
+          <p>最近 20 次转换会保存在后端，便于回看、删除和继续编辑。</p>
         </div>
-        <el-button size="small" :disabled="!history.length" @click="clearHistory">清空历史</el-button>
+        <el-button size="small" :loading="historyLoading" :disabled="!history.length" @click="clearHistory">清空历史</el-button>
       </div>
       <div v-if="history.length" class="history-list">
         <article v-for="item in history" :key="item.id" class="history-item">
           <div>
             <strong>{{ item.title }}</strong>
-            <p>{{ item.createdAt }} · {{ item.generationMode }} · {{ item.chapterCount }} 章 / {{ item.sceneCount }} 场</p>
+            <p>{{ item.createdAt }} · {{ formatGenerationMode(item.generationMode) }} · {{ item.chapterCount }} 章 / {{ item.sceneCount }} 场</p>
+            <small v-if="item.generationMessage">{{ item.generationMessage }}</small>
           </div>
           <div class="history-actions">
             <el-button size="small" type="primary" plain @click="loadHistoryItem(item)">加载</el-button>
@@ -417,11 +563,48 @@ function readError(error: unknown) {
         <div v-if="preview" class="script-preview">
           <div class="preview-meta">
             <strong>{{ preview.title }}</strong>
-            <span>{{ preview.metadata?.generationMode || 'UNKNOWN' }}</span>
+            <span>{{ formatGenerationMode(preview.metadata?.generationMode) }}</span>
           </div>
           <div class="character-strip">
             <el-tag v-for="character in characterNames" :key="character" type="info">{{ character }}</el-tag>
           </div>
+          <section class="relation-panel">
+            <div class="relation-header">
+              <div>
+                <h3>角色关系图</h3>
+                <p>同一场景出现的角色会自动连线，连线越粗代表同场次数越多。</p>
+              </div>
+              <el-tag type="success">{{ relationshipGraph.nodes.length }} 人物 / {{ relationshipGraph.links.length }} 关系</el-tag>
+            </div>
+            <div v-if="relationshipGraph.nodes.length" class="relation-graph">
+              <svg viewBox="0 0 520 320" role="img" aria-label="角色关系图">
+                <line
+                  v-for="link in relationshipGraph.links"
+                  :key="`${link.source}-${link.target}`"
+                  :x1="link.x1"
+                  :y1="link.y1"
+                  :x2="link.x2"
+                  :y2="link.y2"
+                  :stroke-width="2 + (relationshipGraph.maxWeight ? link.weight / relationshipGraph.maxWeight : 0) * 8"
+                  class="relation-link"
+                >
+                  <title>{{ link.source }} 与 {{ link.target }} 同场 {{ link.weight }} 次</title>
+                </line>
+                <g v-for="node in relationshipGraph.nodes" :key="node.name" class="relation-node">
+                  <circle :cx="node.x" :cy="node.y" :r="node.radius">
+                    <title>{{ node.name }}：出场 {{ node.sceneCount }} 场，台词 {{ node.dialogueCount }} 条</title>
+                  </circle>
+                  <text :x="node.x" :y="node.y + node.radius + 18" text-anchor="middle">{{ node.name }}</text>
+                  <text :x="node.x" :y="node.y + 4" text-anchor="middle" class="relation-node-count">{{ node.sceneCount }}</text>
+                </g>
+              </svg>
+              <div class="relation-legend">
+                <span>节点数字 = 出场场景数</span>
+                <span>连线粗细 = 同场次数</span>
+              </div>
+            </div>
+            <div v-else class="relation-empty">当前剧本还没有可识别的人物关系。</div>
+          </section>
           <article v-for="(chapter, chapterIndex) in preview.chapters" :key="chapter.id" class="chapter-preview">
             <header>
               <h3>{{ chapter.title }}</h3>
@@ -482,17 +665,21 @@ function readError(error: unknown) {
           </ul>
         </el-alert>
         <el-alert v-else-if="validation?.valid" title="当前 YAML 符合剧本 Schema" type="success" :closable="false" show-icon />
-        <el-alert
-          v-if="validation?.warnings?.length"
-          title="一致性提醒"
-          type="warning"
-          :closable="false"
-          show-icon
-        >
-          <ul>
-            <li v-for="warning in validation.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </el-alert>
+        <div v-if="validation?.warnings?.length" class="warning-card">
+          <el-alert
+            title="一致性提醒"
+            type="warning"
+            :closable="false"
+            show-icon
+          >
+            <ul>
+              <li v-for="warning in validation.warnings" :key="warning">{{ warning }}</li>
+            </ul>
+          </el-alert>
+          <el-button type="warning" plain :loading="repairLoading" :disabled="!preview" @click="handleRepairConsistency">
+            一键修复一致性
+          </el-button>
+        </div>
         <pre>{{ JSON.stringify(schema, null, 2) }}</pre>
       </el-card>
     </section>

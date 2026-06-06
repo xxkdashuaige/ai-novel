@@ -5,9 +5,13 @@ import com.example.ainovel.script.model.ScriptMetadata;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class SpringAiScriptGenerator implements ScriptGenerator {
+
+    private static final Logger log = LoggerFactory.getLogger(SpringAiScriptGenerator.class);
 
     private final ChatClient chatClient;
     private final RuleBasedScriptGenerator fallbackGenerator;
@@ -29,7 +33,7 @@ public class SpringAiScriptGenerator implements ScriptGenerator {
     @Override
     public ScriptDocument generate(String novelText) {
         if (!enabled) {
-            return fallbackGenerator.generate(novelText);
+            return withGenerationMode(fallbackGenerator.generate(novelText), "RULE_BASED", "AI 未启用，已使用规则解析器转换。");
         }
 
         try {
@@ -42,26 +46,33 @@ public class SpringAiScriptGenerator implements ScriptGenerator {
                     .user(novelText)
                     .call()
                     .entity(ScriptDocument.class);
-            return document == null ? fallback(novelText) : withGenerationMode(document, aiGenerationMode());
+            return document == null
+                    ? fallback(novelText, "AI 未返回有效内容，已使用规则解析器兜底。")
+                    : withGenerationMode(document, aiGenerationMode(), aiGenerationMessage());
         } catch (RuntimeException ex) {
-            return fallback(novelText);
+            log.warn("AI conversion failed, falling back to rule based generator: {}", ex.getMessage());
+            return fallback(novelText, "AI 调用失败，已自动使用规则解析器兜底。");
         }
     }
 
-    private ScriptDocument fallback(String novelText) {
-        return withGenerationMode(fallbackGenerator.generate(novelText), "RULE_BASED_FALLBACK");
+    private ScriptDocument fallback(String novelText, String message) {
+        return withGenerationMode(fallbackGenerator.generate(novelText), "RULE_BASED_FALLBACK", message);
     }
 
-    private ScriptDocument withGenerationMode(ScriptDocument document, String generationMode) {
+    private ScriptDocument withGenerationMode(ScriptDocument document, String generationMode, String generationMessage) {
         int chapterCount = document.chapters() == null ? 0 : document.chapters().size();
         return new ScriptDocument(
                 document.title(),
                 document.chapters(),
-                new ScriptMetadata(chapterCount, generationMode)
+                new ScriptMetadata(chapterCount, generationMode, generationMessage)
         );
     }
 
     private String aiGenerationMode() {
         return baseUrl.toLowerCase().contains("deepseek") ? "AI_DEEPSEEK" : "AI_OPENAI_COMPATIBLE";
+    }
+
+    private String aiGenerationMessage() {
+        return baseUrl.toLowerCase().contains("deepseek") ? "DeepSeek AI 转换成功。" : "OpenAI-compatible AI 转换成功。";
     }
 }

@@ -13,6 +13,8 @@ target/
 logs/
 .tmp/
 *.log
+data/
+backend/data/
 
 # Environment and secrets
 .env
