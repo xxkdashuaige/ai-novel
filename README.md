@@ -12,6 +12,28 @@ frontend/  Vue 3 + Element Plus 前端
 docs/      YAML Schema 与设计文档
 ```
 
+## 技术栈与第三方依赖
+
+后端使用：
+
+- Java 21：后端运行环境。
+- Spring Boot 3.5.14：提供 Web 服务、配置管理和应用启动能力。
+- Spring AI 1.1.7：通过 OpenAI-compatible 客户端调用 DeepSeek 等大模型。
+- Spring Validation：校验请求参数和剧本结构。
+- Jackson YAML：实现剧本对象与 YAML 文本之间的转换。
+- JUnit 5 / Spring Boot Test：后端单元测试和上下文启动测试。
+
+前端使用：
+
+- Vue 3.5：构建单页应用界面。
+- Element Plus 2.11：提供按钮、卡片、弹窗、标签、提示等 UI 组件。
+- Axios 1.12：调用后端 REST API。
+- Vite 7.1：前端开发服务器和生产构建工具。
+- TypeScript 5.9 / vue-tsc：提供类型检查和前端构建校验。
+- pnpm：前端依赖管理工具。
+
+项目中的 AI 状态提示、一致性修复、转换历史管理、角色关系图等业务逻辑为本项目自主实现；第三方依赖仅用于框架、UI、网络请求、序列化和测试能力。
+
 ## 快速启动
 
 如果你把源码发给别人，建议让对方先阅读 [docs/startup.md](docs/startup.md)。里面包含 Windows PowerShell 下的完整启动步骤、DeepSeek API Key 配置方式、无 API Key 演示方式和常见问题。
