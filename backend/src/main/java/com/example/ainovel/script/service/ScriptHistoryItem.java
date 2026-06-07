@@ -12,6 +12,21 @@ public record ScriptHistoryItem(
         int sceneCount,
         ScriptDocument script,
         String yaml,
-        ValidationResult validation
+        ValidationResult validation,
+        QualityReport quality
 ) {
+    public ScriptHistoryItem(
+            String id,
+            String title,
+            String createdAt,
+            String generationMode,
+            String generationMessage,
+            int chapterCount,
+            int sceneCount,
+            ScriptDocument script,
+            String yaml,
+            ValidationResult validation
+    ) {
+        this(id, title, createdAt, generationMode, generationMessage, chapterCount, sceneCount, script, yaml, validation, null);
+    }
 }

@@ -9,15 +9,18 @@ public class ScriptConversionService {
     private final SpringAiScriptGenerator generator;
     private final YamlScriptService yamlScriptService;
     private final ScriptValidationService validationService;
+    private final ScriptQualityService qualityService;
 
     public ScriptConversionService(
             SpringAiScriptGenerator generator,
             YamlScriptService yamlScriptService,
-            ScriptValidationService validationService
+            ScriptValidationService validationService,
+            ScriptQualityService qualityService
     ) {
         this.generator = generator;
         this.yamlScriptService = yamlScriptService;
         this.validationService = validationService;
+        this.qualityService = qualityService;
     }
 
     public ConversionResponse convert(String novelText) {
@@ -28,6 +31,7 @@ public class ScriptConversionService {
     public ConversionResponse render(ScriptDocument document) {
         String yaml = yamlScriptService.toYaml(document);
         ValidationResult validation = validationService.validate(document);
-        return new ConversionResponse(document, yaml, validation);
+        QualityReport quality = qualityService.analyze(document, validation);
+        return new ConversionResponse(document, yaml, validation, quality);
     }
 }

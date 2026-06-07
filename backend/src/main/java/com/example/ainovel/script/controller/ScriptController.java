@@ -10,6 +10,7 @@ import com.example.ainovel.script.service.ScriptConversionService;
 import com.example.ainovel.script.service.ScriptHistoryItem;
 import com.example.ainovel.script.service.ScriptHistoryService;
 import com.example.ainovel.script.service.ScriptValidationService;
+import com.example.ainovel.script.service.SceneEditResponse;
 import com.example.ainovel.script.service.ValidationResult;
 import com.example.ainovel.script.model.ScriptDocument;
 import jakarta.validation.Valid;
@@ -75,6 +76,11 @@ public class ScriptController {
     @PostMapping("/scripts/edit")
     public EditResponse edit(@Valid @RequestBody EditRequest request) {
         return editingService.edit(request);
+    }
+
+    @PostMapping("/scripts/edit-scene")
+    public SceneEditResponse editScene(@Valid @RequestBody SceneEditRequest request) {
+        return editingService.editScene(request);
     }
 
     @PostMapping("/scripts/validate")

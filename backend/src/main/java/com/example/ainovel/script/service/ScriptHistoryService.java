@@ -52,7 +52,8 @@ public class ScriptHistoryService {
                 countScenes(script),
                 script,
                 response.yaml(),
-                response.validation()
+                response.validation(),
+                response.quality()
         );
         items.addFirst(item);
         write(items.stream().limit(maxItems).toList());

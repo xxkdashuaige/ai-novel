@@ -6,6 +6,7 @@ import {
   convertNovel,
   deleteHistoryItem,
   editBeat,
+  editScene,
   fetchAiStatus,
   fetchHistory,
   fetchSchema,
@@ -14,9 +15,11 @@ import {
   validateYaml,
   type AiStatusResponse,
   type ConversionResponse,
+  type QualityReport,
   type ScriptBeat,
   type ScriptDocument,
   type ScriptHistoryItem,
+  type ScriptScene,
   type ValidationResult
 } from './api'
 
@@ -24,10 +27,24 @@ interface EditTarget {
   chapterIndex: number
   sceneIndex: number
   beatIndex: number
-  actionType: 'polish-dialogue' | 'expand-action'
+  actionType: EditActionType
   beat: ScriptBeat
   sceneTitle: string
   characters: string[]
+}
+
+type EditActionType = 'polish-dialogue' | 'expand-action' | 'enhance-conflict' | 'short-drama-style' | 'compress-dialogue' | 'add-camera-language'
+type SceneEditActionType = 'polish-scene-dialogue' | 'expand-scene-action' | 'enhance-scene-conflict'
+
+interface EditAction {
+  type: EditActionType
+  label: string
+  beatTypes?: string[]
+}
+
+interface SceneEditAction {
+  type: SceneEditActionType
+  label: string
 }
 
 interface CharacterRelationNode {
@@ -55,6 +72,19 @@ interface CharacterRelationGraph {
   maxWeight: number
 }
 
+interface ShotRow {
+  id: string
+  index: number
+  chapter: string
+  scene: string
+  location: string
+  timeOfDay: string
+  characters: string
+  type: string
+  speaker: string
+  content: string
+}
+
 const sampleText = `第一章 雨夜
 林舟推开木门，雨水扑面而来。
 林舟：“我们必须马上离开。”
@@ -72,6 +102,7 @@ const yaml = ref('')
 const preview = ref<ScriptDocument | null>(null)
 const schema = ref<unknown>(null)
 const validation = ref<ValidationResult | null>(null)
+const quality = ref<QualityReport | null>(null)
 const history = ref<ScriptHistoryItem[]>([])
 const aiStatus = ref<AiStatusResponse | null>(null)
 const loading = ref(false)
@@ -84,6 +115,29 @@ const editLoading = ref(false)
 const editSuggestion = ref('')
 const editMode = ref('')
 const editTarget = ref<EditTarget | null>(null)
+const activePreviewTab = ref('chapters')
+const conversionStepIndex = ref(0)
+const historyKeyword = ref('')
+const historyModeFilter = ref('')
+const sceneEditLoadingKey = ref('')
+let conversionProgressTimer: number | undefined
+
+const editActions: EditAction[] = [
+  { type: 'polish-dialogue', label: '优化台词', beatTypes: ['dialogue'] },
+  { type: 'compress-dialogue', label: '压缩对白', beatTypes: ['dialogue'] },
+  { type: 'expand-action', label: '补充动作', beatTypes: ['action', 'narration'] },
+  { type: 'add-camera-language', label: '补充镜头语言', beatTypes: ['action', 'narration', 'transition'] },
+  { type: 'enhance-conflict', label: '增强冲突' },
+  { type: 'short-drama-style', label: '改成短剧风格' }
+]
+
+const sceneEditActions: SceneEditAction[] = [
+  { type: 'polish-scene-dialogue', label: '优化整场对白' },
+  { type: 'expand-scene-action', label: '补充动作细节' },
+  { type: 'enhance-scene-conflict', label: '增强冲突节奏' }
+]
+
+const conversionSteps = ['准备文本', '调用 AI/规则解析', '结构化剧本', '校验质量', '保存历史']
 
 const chapterCount = computed(() => {
   const matches = novelText.value.match(/^第[一二三四五六七八九十百千万0-9]+章/gm)
@@ -105,6 +159,20 @@ const characterNames = computed(() => {
   return [...names]
 })
 const relationshipGraph = computed(() => buildCharacterRelationGraph(preview.value))
+const shotRows = computed(() => buildShotRows(preview.value))
+const filteredHistory = computed(() => {
+  const keyword = historyKeyword.value.trim().toLowerCase()
+  return history.value.filter((item) => {
+    const matchesKeyword = !keyword || [
+      item.title,
+      item.createdAt,
+      item.generationMessage,
+      formatGenerationMode(item.generationMode)
+    ].some((text) => String(text || '').toLowerCase().includes(keyword))
+    const matchesMode = !historyModeFilter.value || item.generationMode === historyModeFilter.value
+    return matchesKeyword && matchesMode
+  })
+})
 
 onMounted(async () => {
   await Promise.all([loadAiStatus(), loadHistory()])
@@ -112,19 +180,36 @@ onMounted(async () => {
 
 async function handleConvert() {
   loading.value = true
+  startConversionProgress()
   yaml.value = ''
   preview.value = null
   validation.value = null
+  quality.value = null
   try {
     const result: ConversionResponse = await convertNovel(novelText.value)
+    conversionStepIndex.value = conversionSteps.length - 1
     setConversionResult(result)
     await loadHistory()
     ElMessage.success(result.script.metadata?.generationMessage || '转换完成，已保存到后端历史记录')
   } catch (error) {
     ElMessage.error(readError(error))
   } finally {
+    stopConversionProgress()
     loading.value = false
   }
+}
+
+function startConversionProgress() {
+  conversionStepIndex.value = 0
+  window.clearInterval(conversionProgressTimer)
+  conversionProgressTimer = window.setInterval(() => {
+    conversionStepIndex.value = Math.min(conversionStepIndex.value + 1, conversionSteps.length - 2)
+  }, 1200)
+}
+
+function stopConversionProgress() {
+  window.clearInterval(conversionProgressTimer)
+  conversionProgressTimer = undefined
 }
 
 async function handleValidate() {
@@ -157,7 +242,7 @@ async function handleLoadSchema() {
 async function requestBeatEdit(target: EditTarget) {
   editTarget.value = target
   editSuggestion.value = ''
-  editMode.value = target.actionType === 'polish-dialogue' ? '台词优化' : '动作补充'
+  editMode.value = editActionLabel(target.actionType)
   editDialogVisible.value = true
   editLoading.value = true
   try {
@@ -176,6 +261,14 @@ async function requestBeatEdit(target: EditTarget) {
   } finally {
     editLoading.value = false
   }
+}
+
+function availableEditActions(beat: ScriptBeat) {
+  return editActions.filter((action) => !action.beatTypes || action.beatTypes.includes(beat.type))
+}
+
+function editActionLabel(type: EditActionType) {
+  return editActions.find((action) => action.type === type)?.label || '内容优化'
 }
 
 async function applyEditSuggestion() {
@@ -198,6 +291,36 @@ async function applyEditSuggestion() {
   }
 }
 
+async function requestSceneEdit(chapterIndex: number, sceneIndex: number, actionType: SceneEditActionType, scene: ScriptScene) {
+  if (!preview.value) {
+    return
+  }
+  const loadingKey = `${chapterIndex}-${sceneIndex}-${actionType}`
+  sceneEditLoadingKey.value = loadingKey
+  try {
+    const response = await editScene({
+      type: actionType,
+      sceneTitle: scene.title,
+      characters: scene.characters,
+      beats: scene.beats
+    })
+    const nextScript = cloneScript(preview.value)
+    nextScript.chapters[chapterIndex].scenes[sceneIndex].beats = response.beats
+    const result = await renderScript(nextScript)
+    setConversionResult(result)
+    await loadHistory()
+    ElMessage.success(`${sceneEditActionLabel(actionType)}已应用（${formatGenerationMode(response.generationMode)}）`)
+  } catch (error) {
+    ElMessage.error(readError(error))
+  } finally {
+    sceneEditLoadingKey.value = ''
+  }
+}
+
+function sceneEditActionLabel(type: SceneEditActionType) {
+  return sceneEditActions.find((action) => action.type === type)?.label || '场景优化'
+}
+
 function handleDownload() {
   downloadFile('script.yaml', yaml.value, 'text/yaml;charset=utf-8')
 }
@@ -216,6 +339,38 @@ function handleExportText() {
     return
   }
   downloadFile('script.txt', toReadableText(preview.value), 'text/plain;charset=utf-8')
+}
+
+function handleExportWord() {
+  if (!preview.value) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  downloadFile('script.doc', toDocumentHtml(preview.value), 'application/msword;charset=utf-8')
+}
+
+function handlePrintPdf() {
+  if (!preview.value) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  const printWindow = window.open('', '_blank')
+  if (!printWindow) {
+    ElMessage.warning('浏览器阻止了打印窗口，请允许弹窗后重试')
+    return
+  }
+  printWindow.document.write(toDocumentHtml(preview.value))
+  printWindow.document.close()
+  printWindow.focus()
+  printWindow.print()
+}
+
+function handleExportShotCsv() {
+  if (!shotRows.value.length) {
+    ElMessage.warning('请先完成一次转换')
+    return
+  }
+  downloadFile('shot-table.csv', toShotCsv(shotRows.value), 'text/csv;charset=utf-8')
 }
 
 async function handleRepairConsistency() {
@@ -240,6 +395,7 @@ function loadHistoryItem(item: ScriptHistoryItem) {
   preview.value = cloneScript(item.script)
   yaml.value = item.yaml
   validation.value = item.validation
+  quality.value = item.quality || null
   ElMessage.success('已加载历史记录')
 }
 
@@ -275,6 +431,7 @@ function setConversionResult(result: ConversionResponse) {
   yaml.value = result.yaml
   preview.value = result.script
   validation.value = result.validation
+  quality.value = result.quality
 }
 
 async function loadAiStatus() {
@@ -298,6 +455,32 @@ async function loadHistory() {
 
 function countScenes(script: ScriptDocument | null) {
   return script?.chapters.reduce((total, chapter) => total + chapter.scenes.length, 0) ?? 0
+}
+
+function buildShotRows(script: ScriptDocument | null): ShotRow[] {
+  if (!script) {
+    return []
+  }
+  const rows: ShotRow[] = []
+  script.chapters.forEach((chapter, chapterIndex) => {
+    chapter.scenes.forEach((scene, sceneIndex) => {
+      scene.beats.forEach((beat, beatIndex) => {
+        rows.push({
+          id: `${chapter.id}-${scene.id}-${beatIndex}`,
+          index: rows.length + 1,
+          chapter: chapter.title || `第 ${chapterIndex + 1} 章`,
+          scene: scene.title || `场景 ${sceneIndex + 1}`,
+          location: scene.location || '未标注',
+          timeOfDay: scene.timeOfDay || '未标注',
+          characters: scene.characters?.filter(Boolean).join('、') || '未标注',
+          type: formatBeatType(beat.type),
+          speaker: beat.speaker || '-',
+          content: beat.content
+        })
+      })
+    })
+  })
+  return rows
 }
 
 function buildCharacterRelationGraph(script: ScriptDocument | null): CharacterRelationGraph {
@@ -426,12 +609,84 @@ function formatBeat(beat: ScriptBeat) {
   if (beat.type === 'dialogue') {
     return `${beat.speaker || '角色'}：${beat.content}`
   }
+  return `[${formatBeatType(beat.type)}] ${beat.content}`
+}
+
+function formatBeatType(type: string) {
   const labels: Record<string, string> = {
+    dialogue: '对白',
     action: '动作',
     narration: '旁白',
     transition: '转场'
   }
-  return `[${labels[beat.type] ?? beat.type}] ${beat.content}`
+  return labels[type] ?? type
+}
+
+function toShotCsv(rows: ShotRow[]) {
+  const headers = ['序号', '章节', '场景', '地点', '时间', '人物', '类型', '说话人', '内容']
+  const lines = rows.map((row) => [
+    row.index,
+    row.chapter,
+    row.scene,
+    row.location,
+    row.timeOfDay,
+    row.characters,
+    row.type,
+    row.speaker,
+    row.content
+  ].map(csvCell).join(','))
+  return `\uFEFF${headers.join(',')}\n${lines.join('\n')}`
+}
+
+function toDocumentHtml(script: ScriptDocument) {
+  const body = script.chapters.map((chapter) => `
+    <section class="chapter">
+      <h2>${escapeHtml(chapter.title)}</h2>
+      <p class="summary">${escapeHtml(chapter.summary)}</p>
+      ${chapter.scenes.map((scene) => `
+        <article class="scene">
+          <h3>${escapeHtml(scene.title)} <span>${escapeHtml(scene.location)} / ${escapeHtml(scene.timeOfDay)}</span></h3>
+          <p class="characters">人物：${escapeHtml(scene.characters.join('、') || '未标注')}</p>
+          ${scene.beats.map((beat) => `<p class="beat">${escapeHtml(formatBeat(beat))}</p>`).join('')}
+        </article>
+      `).join('')}
+    </section>
+  `).join('')
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(script.title)}</title>
+  <style>
+    body { font-family: "Microsoft YaHei", sans-serif; color: #1f2a24; line-height: 1.75; padding: 36px; }
+    h1 { text-align: center; letter-spacing: 0.08em; }
+    h2 { margin-top: 32px; border-bottom: 1px solid #d8ded5; padding-bottom: 8px; }
+    h3 { margin-bottom: 4px; }
+    h3 span { color: #66776b; font-size: 0.86em; font-weight: 400; }
+    .summary, .characters { color: #5e7064; }
+    .scene { margin: 18px 0; padding: 14px 18px; border: 1px solid #e4e8df; border-radius: 10px; }
+    .beat { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(script.title)}</h1>
+  ${body}
+</body>
+</html>`
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function csvCell(value: string | number) {
+  const text = String(value)
+  return `"${text.replaceAll('"', '""')}"`
 }
 
 function readError(error: unknown) {
@@ -469,6 +724,8 @@ function readError(error: unknown) {
               <el-dropdown-item @click="handleDownload">导出 YAML</el-dropdown-item>
               <el-dropdown-item @click="handleExportJson">导出 JSON</el-dropdown-item>
               <el-dropdown-item @click="handleExportText">导出 TXT</el-dropdown-item>
+              <el-dropdown-item @click="handleExportWord">导出 DOC</el-dropdown-item>
+              <el-dropdown-item @click="handlePrintPdf">打印 / 保存 PDF</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -487,7 +744,16 @@ function readError(error: unknown) {
       </div>
       <div v-if="loading" class="ai-status" role="status" aria-live="polite">
         <span class="ai-status__dot"></span>
-        <span>{{ aiStatus?.provider || 'AI' }} 正在理解章节、人物和对白，生成结构化 YAML 剧本，请稍候...</span>
+        <span>{{ aiStatus?.provider || 'AI' }} 正在处理：{{ conversionSteps[conversionStepIndex] }}，请稍候...</span>
+      </div>
+      <div v-if="loading" class="conversion-steps">
+        <span
+          v-for="(step, index) in conversionSteps"
+          :key="step"
+          :class="['conversion-step', { 'conversion-step--active': index <= conversionStepIndex }]"
+        >
+          {{ step }}
+        </span>
       </div>
     </section>
 
@@ -536,18 +802,29 @@ function readError(error: unknown) {
         </div>
         <el-button size="small" :loading="historyLoading" :disabled="!history.length" @click="clearHistory">清空历史</el-button>
       </div>
+      <div v-if="history.length" class="history-filters">
+        <el-input v-model="historyKeyword" clearable placeholder="搜索标题、时间或生成说明" />
+        <el-select v-model="historyModeFilter" clearable placeholder="筛选生成模式">
+          <el-option label="DeepSeek AI" value="AI_DEEPSEEK" />
+          <el-option label="OpenAI-compatible AI" value="AI_OPENAI_COMPATIBLE" />
+          <el-option label="规则解析器" value="RULE_BASED" />
+          <el-option label="规则兜底" value="RULE_BASED_FALLBACK" />
+        </el-select>
+      </div>
       <div v-if="history.length" class="history-list">
-        <article v-for="item in history" :key="item.id" class="history-item">
+        <article v-for="item in filteredHistory" :key="item.id" class="history-item">
           <div>
             <strong>{{ item.title }}</strong>
             <p>{{ item.createdAt }} · {{ formatGenerationMode(item.generationMode) }} · {{ item.chapterCount }} 章 / {{ item.sceneCount }} 场</p>
             <small v-if="item.generationMessage">{{ item.generationMessage }}</small>
+            <small v-if="item.quality">质量评分：{{ item.quality.score }} / {{ item.quality.level }}</small>
           </div>
           <div class="history-actions">
             <el-button size="small" type="primary" plain @click="loadHistoryItem(item)">加载</el-button>
             <el-button size="small" type="danger" plain @click="removeHistoryItem(item.id)">删除</el-button>
           </div>
         </article>
+        <div v-if="!filteredHistory.length" class="empty-history">没有匹配的历史记录，可以调整搜索或筛选条件。</div>
       </div>
       <div v-else class="empty-history">完成一次转换后，这里会自动保存历史记录。</div>
     </section>
@@ -568,90 +845,149 @@ function readError(error: unknown) {
           <div class="character-strip">
             <el-tag v-for="character in characterNames" :key="character" type="info">{{ character }}</el-tag>
           </div>
-          <section class="relation-panel">
-            <div class="relation-header">
-              <div>
-                <h3>角色关系图</h3>
-                <p>同一场景出现的角色会自动连线，连线越粗代表同场次数越多。</p>
-              </div>
-              <el-tag type="success">{{ relationshipGraph.nodes.length }} 人物 / {{ relationshipGraph.links.length }} 关系</el-tag>
-            </div>
-            <div v-if="relationshipGraph.nodes.length" class="relation-graph">
-              <svg viewBox="0 0 520 320" role="img" aria-label="角色关系图">
-                <line
-                  v-for="link in relationshipGraph.links"
-                  :key="`${link.source}-${link.target}`"
-                  :x1="link.x1"
-                  :y1="link.y1"
-                  :x2="link.x2"
-                  :y2="link.y2"
-                  :stroke-width="2 + (relationshipGraph.maxWeight ? link.weight / relationshipGraph.maxWeight : 0) * 8"
-                  class="relation-link"
-                >
-                  <title>{{ link.source }} 与 {{ link.target }} 同场 {{ link.weight }} 次</title>
-                </line>
-                <g v-for="node in relationshipGraph.nodes" :key="node.name" class="relation-node">
-                  <circle :cx="node.x" :cy="node.y" :r="node.radius">
-                    <title>{{ node.name }}：出场 {{ node.sceneCount }} 场，台词 {{ node.dialogueCount }} 条</title>
-                  </circle>
-                  <text :x="node.x" :y="node.y + node.radius + 18" text-anchor="middle">{{ node.name }}</text>
-                  <text :x="node.x" :y="node.y + 4" text-anchor="middle" class="relation-node-count">{{ node.sceneCount }}</text>
-                </g>
-              </svg>
-              <div class="relation-legend">
-                <span>节点数字 = 出场场景数</span>
-                <span>连线粗细 = 同场次数</span>
-              </div>
-            </div>
-            <div v-else class="relation-empty">当前剧本还没有可识别的人物关系。</div>
-          </section>
-          <article v-for="(chapter, chapterIndex) in preview.chapters" :key="chapter.id" class="chapter-preview">
-            <header>
-              <h3>{{ chapter.title }}</h3>
-              <p>{{ chapter.summary }}</p>
-            </header>
-            <section v-for="(scene, sceneIndex) in chapter.scenes" :key="scene.id" class="scene-preview">
-              <div class="scene-title">
-                <strong>{{ scene.title }}</strong>
-                <span>{{ scene.location }} · {{ scene.timeOfDay }}</span>
-              </div>
-              <div class="scene-characters">
-                <el-tag v-for="character in scene.characters" :key="character" size="small">{{ character }}</el-tag>
-              </div>
-              <div class="beat-list">
-                <div v-for="(beat, beatIndex) in scene.beats" :key="`${scene.id}-${beatIndex}`" :class="['beat-item', `beat-item--${beat.type}`]">
-                  <div class="beat-heading">
-                    <span class="beat-type">{{ beat.type }}</span>
-                    <div class="beat-actions">
-                      <el-button
-                        v-if="beat.type === 'dialogue'"
-                        size="small"
-                        text
-                        @click="requestBeatEdit({ chapterIndex, sceneIndex, beatIndex, actionType: 'polish-dialogue', beat, sceneTitle: scene.title, characters: scene.characters })"
-                      >
-                        优化台词
-                      </el-button>
-                      <el-button
-                        v-if="beat.type === 'action' || beat.type === 'narration'"
-                        size="small"
-                        text
-                        @click="requestBeatEdit({ chapterIndex, sceneIndex, beatIndex, actionType: 'expand-action', beat, sceneTitle: scene.title, characters: scene.characters })"
-                      >
-                        补充动作
-                      </el-button>
+          <el-tabs v-model="activePreviewTab" class="preview-tabs">
+            <el-tab-pane label="章节预览" name="chapters">
+              <div class="tab-scroll">
+                <article v-for="(chapter, chapterIndex) in preview.chapters" :key="chapter.id" class="chapter-preview">
+                  <header>
+                    <h3>{{ chapter.title }}</h3>
+                    <p>{{ chapter.summary }}</p>
+                  </header>
+                  <section v-for="(scene, sceneIndex) in chapter.scenes" :key="scene.id" class="scene-preview">
+                    <div class="scene-title">
+                      <div>
+                        <strong>{{ scene.title }}</strong>
+                        <el-dropdown trigger="click" :disabled="Boolean(sceneEditLoadingKey)">
+                          <el-button size="small" text :loading="sceneEditLoadingKey.startsWith(`${chapterIndex}-${sceneIndex}-`)">
+                            AI 场景编辑
+                          </el-button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item
+                                v-for="action in sceneEditActions"
+                                :key="action.type"
+                                @click="requestSceneEdit(chapterIndex, sceneIndex, action.type, scene)"
+                              >
+                                {{ action.label }}
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </div>
+                      <span>{{ scene.location }} · {{ scene.timeOfDay }}</span>
                     </div>
-                  </div>
-                  <strong v-if="beat.speaker">{{ beat.speaker }}</strong>
-                  <p>{{ beat.content }}</p>
-                </div>
+                    <div class="scene-characters">
+                      <el-tag v-for="character in scene.characters" :key="character" size="small">{{ character }}</el-tag>
+                    </div>
+                    <div class="beat-list">
+                      <div v-for="(beat, beatIndex) in scene.beats" :key="`${scene.id}-${beatIndex}`" :class="['beat-item', `beat-item--${beat.type}`]">
+                        <div class="beat-heading">
+                          <span class="beat-type">{{ beat.type }}</span>
+                          <div class="beat-actions">
+                            <el-dropdown trigger="click">
+                              <el-button size="small" text>AI 编辑</el-button>
+                              <template #dropdown>
+                                <el-dropdown-menu>
+                                  <el-dropdown-item
+                                    v-for="action in availableEditActions(beat)"
+                                    :key="action.type"
+                                    @click="requestBeatEdit({ chapterIndex, sceneIndex, beatIndex, actionType: action.type, beat, sceneTitle: scene.title, characters: scene.characters })"
+                                  >
+                                    {{ action.label }}
+                                  </el-dropdown-item>
+                                </el-dropdown-menu>
+                              </template>
+                            </el-dropdown>
+                          </div>
+                        </div>
+                        <strong v-if="beat.speaker">{{ beat.speaker }}</strong>
+                        <p>{{ beat.content }}</p>
+                      </div>
+                    </div>
+                  </section>
+                </article>
               </div>
-            </section>
-          </article>
+            </el-tab-pane>
+            <el-tab-pane label="角色关系图" name="relations">
+              <section class="relation-panel">
+                <div class="relation-header">
+                  <div>
+                    <h3>角色关系图</h3>
+                    <p>同一场景出现的角色会自动连线，连线越粗代表同场次数越多。</p>
+                  </div>
+                  <el-tag type="success">{{ relationshipGraph.nodes.length }} 人物 / {{ relationshipGraph.links.length }} 关系</el-tag>
+                </div>
+                <div v-if="relationshipGraph.nodes.length" class="relation-graph">
+                  <svg viewBox="0 0 520 320" role="img" aria-label="角色关系图">
+                    <line
+                      v-for="link in relationshipGraph.links"
+                      :key="`${link.source}-${link.target}`"
+                      :x1="link.x1"
+                      :y1="link.y1"
+                      :x2="link.x2"
+                      :y2="link.y2"
+                      :stroke-width="2 + (relationshipGraph.maxWeight ? link.weight / relationshipGraph.maxWeight : 0) * 8"
+                      class="relation-link"
+                    >
+                      <title>{{ link.source }} 与 {{ link.target }} 同场 {{ link.weight }} 次</title>
+                    </line>
+                    <g v-for="node in relationshipGraph.nodes" :key="node.name" class="relation-node">
+                      <circle :cx="node.x" :cy="node.y" :r="node.radius">
+                        <title>{{ node.name }}：出场 {{ node.sceneCount }} 场，台词 {{ node.dialogueCount }} 条</title>
+                      </circle>
+                      <text :x="node.x" :y="node.y + node.radius + 18" text-anchor="middle">{{ node.name }}</text>
+                      <text :x="node.x" :y="node.y + 4" text-anchor="middle" class="relation-node-count">{{ node.sceneCount }}</text>
+                    </g>
+                  </svg>
+                  <div class="relation-legend">
+                    <span>节点数字 = 出场场景数</span>
+                    <span>连线粗细 = 同场次数</span>
+                  </div>
+                </div>
+                <div v-else class="relation-empty">当前剧本还没有可识别的人物关系。</div>
+              </section>
+            </el-tab-pane>
+            <el-tab-pane label="场景分镜表" name="shots">
+              <section class="shot-panel">
+                <div class="shot-header">
+                  <div>
+                    <h3>场景分镜表</h3>
+                    <p>按章节、场景和节拍整理为拍摄/汇报用表格，一条对白、动作或旁白对应一行。</p>
+                  </div>
+                  <div class="shot-actions">
+                    <el-tag type="success">共 {{ shotRows.length }} 条分镜</el-tag>
+                    <el-button size="small" type="primary" plain :disabled="!shotRows.length" @click="handleExportShotCsv">
+                      导出 CSV
+                    </el-button>
+                  </div>
+                </div>
+                <el-table
+                  v-if="shotRows.length"
+                  :data="shotRows"
+                  class="shot-table"
+                  border
+                  stripe
+                  max-height="520"
+                >
+                  <el-table-column prop="index" label="#" width="58" fixed />
+                  <el-table-column prop="chapter" label="章节" min-width="130" />
+                  <el-table-column prop="scene" label="场景" min-width="130" />
+                  <el-table-column prop="location" label="地点" min-width="120" />
+                  <el-table-column prop="timeOfDay" label="时间" width="96" />
+                  <el-table-column prop="characters" label="人物" min-width="180" />
+                  <el-table-column prop="type" label="类型" width="92" />
+                  <el-table-column prop="speaker" label="说话人" width="110" />
+                  <el-table-column prop="content" label="内容" min-width="280" show-overflow-tooltip />
+                </el-table>
+                <div v-else class="relation-empty">当前剧本还没有可生成的分镜记录。</div>
+              </section>
+            </el-tab-pane>
+          </el-tabs>
         </div>
         <div v-else class="empty-preview">转换完成后，这里会按章节和场景展示剧本预览。</div>
       </el-card>
 
-      <el-card class="panel" shadow="never">
+      <el-card class="panel validation-panel" shadow="never">
         <template #header>校验与 Schema</template>
         <el-alert
           v-if="validation && !validation.valid"
@@ -665,6 +1001,33 @@ function readError(error: unknown) {
           </ul>
         </el-alert>
         <el-alert v-else-if="validation?.valid" title="当前 YAML 符合剧本 Schema" type="success" :closable="false" show-icon />
+        <section v-if="quality" class="quality-card">
+          <div class="quality-score">
+            <div>
+              <span>剧本质量评分</span>
+              <strong>{{ quality.score }}</strong>
+            </div>
+            <el-tag :type="quality.score >= 90 ? 'success' : quality.score > 60 ? 'warning' : 'danger'">
+              {{ quality.level }}
+            </el-tag>
+          </div>
+          <div v-if="quality.issues.length" class="quality-list">
+            <p>发现的问题</p>
+            <el-tag
+              v-for="issue in quality.issues"
+              :key="`${issue.type}-${issue.message}`"
+              :type="issue.severity === 'error' ? 'danger' : 'warning'"
+            >
+              {{ issue.message }}
+            </el-tag>
+          </div>
+          <div v-if="quality.suggestions.length" class="quality-list">
+            <p>优化建议</p>
+            <ul>
+              <li v-for="suggestion in quality.suggestions" :key="suggestion">{{ suggestion }}</li>
+            </ul>
+          </div>
+        </section>
         <div v-if="validation?.warnings?.length" class="warning-card">
           <el-alert
             title="一致性提醒"
@@ -680,7 +1043,7 @@ function readError(error: unknown) {
             一键修复一致性
           </el-button>
         </div>
-        <pre>{{ JSON.stringify(schema, null, 2) }}</pre>
+        <pre>{{ schema ? JSON.stringify(schema, null, 2) : '点击“查看 Schema”后，这里会展示剧本结构规则。' }}</pre>
       </el-card>
     </section>
 

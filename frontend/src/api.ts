@@ -6,10 +6,24 @@ export interface ValidationResult {
   warnings: string[]
 }
 
+export interface QualityIssue {
+  type: string
+  severity: 'error' | 'warning' | string
+  message: string
+}
+
+export interface QualityReport {
+  score: number
+  level: string
+  issues: QualityIssue[]
+  suggestions: string[]
+}
+
 export interface ConversionResponse {
   script: ScriptDocument
   yaml: string
   validation: ValidationResult
+  quality: QualityReport
 }
 
 export interface AiStatusResponse {
@@ -25,6 +39,11 @@ export interface EditResponse {
   generationMode: string
 }
 
+export interface SceneEditResponse {
+  beats: ScriptBeat[]
+  generationMode: string
+}
+
 export interface ScriptHistoryItem {
   id: string
   title: string
@@ -36,6 +55,7 @@ export interface ScriptHistoryItem {
   script: ScriptDocument
   yaml: string
   validation: ValidationResult
+  quality?: QualityReport
 }
 
 export interface ScriptDocument {
@@ -91,13 +111,23 @@ export async function repairScript(script: ScriptDocument): Promise<ConversionRe
 }
 
 export async function editBeat(input: {
-  type: 'polish-dialogue' | 'expand-action'
+  type: 'polish-dialogue' | 'expand-action' | 'enhance-conflict' | 'short-drama-style' | 'compress-dialogue' | 'add-camera-language'
   content: string
   speaker?: string
   sceneTitle?: string
   characters?: string[]
 }): Promise<EditResponse> {
   const response = await axios.post<EditResponse>('/api/scripts/edit', input)
+  return response.data
+}
+
+export async function editScene(input: {
+  type: 'polish-scene-dialogue' | 'expand-scene-action' | 'enhance-scene-conflict'
+  sceneTitle?: string
+  characters?: string[]
+  beats: ScriptBeat[]
+}): Promise<SceneEditResponse> {
+  const response = await axios.post<SceneEditResponse>('/api/scripts/edit-scene', input)
   return response.data
 }
 
