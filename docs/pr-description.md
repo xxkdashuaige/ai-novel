@@ -75,7 +75,9 @@ pnpm build
 
 ## Demo 说明
 
-Demo 视频链接暂未补充。录制完成后，可将链接补充到 README 和本 PR 文档中。
+Demo 视频链接：
+
+- [Bilibili - AI 小说转剧本工具演示](https://www.bilibili.com/video/BV1PWEt6KEHq/?spm_id_from=333.1387.homepage.video_card.click&vd_source=d0e06029c8f855f89f969173f115552a)
 
 录制讲解稿见：
 

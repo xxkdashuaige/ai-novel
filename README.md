@@ -6,7 +6,7 @@
 
 ## Demo 视频
 
-Demo 视频：待补充。
+Demo 视频：[Bilibili - AI 小说转剧本工具演示](https://www.bilibili.com/video/BV1PWEt6KEHq/?spm_id_from=333.1387.homepage.video_card.click&vd_source=d0e06029c8f855f89f969173f115552a)
 
 录制脚本可参考 [docs/demo-script.md](docs/demo-script.md)。录制完成后，可以把视频链接补充到这里。
 
